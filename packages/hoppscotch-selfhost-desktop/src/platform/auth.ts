@@ -29,6 +29,8 @@ async function logout() {
   const store = new Store(APP_DATA_PATH)
   await store.set("refresh_token", {})
   await store.set("access_token", {})
+  console.log("logout refresh_token", await store.get("refresh_token"))
+  console.log("logout access_token", await store.get("access_token"))
   await store.save()
 }
 
@@ -46,9 +48,11 @@ async function signInUserWithMicrosoftFB() {
 
 async function getInitialUserDetails() {
   const store = new Store(APP_DATA_PATH);
+  console.log('import.meta.env.VITE_BACKEND_GQL_URL', import.meta.env.VITE_BACKEND_GQL_URL)
 
   try {
     const accessToken = await store.get("access_token")
+    console.log('accessToken', accessToken)
     let client = await getClient()
     let body = {
       query: `query Me {
@@ -65,7 +69,9 @@ async function getInitialUserDetails() {
     let res = await client.post(`${import.meta.env.VITE_BACKEND_GQL_URL}`,
       Body.json(body), {
       headers: {
-        "Cookie": `access_token=${accessToken.value}`,
+        // "Cookie": `access_token=${accessToken.value}`,
+        Authorization: `Bearer ${accessToken}`,
+        access_token: accessToken
       }
     }
     )

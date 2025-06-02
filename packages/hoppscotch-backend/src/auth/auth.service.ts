@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Res } from '@nestjs/common';
 import { MailerService } from 'src/mailer/mailer.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { UserService } from 'src/user/user.service';
@@ -34,12 +34,12 @@ import { InfraConfigService } from 'src/infra-config/infra-config.service';
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly usersService: UserService,
-    private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
+    private usersService: UserService,
+    private prismaService: PrismaService,
+    private jwtService: JwtService,
     private readonly mailerService: MailerService,
     private readonly configService: ConfigService,
-    private readonly infraConfigService: InfraConfigService,
+    private infraConfigService: InfraConfigService,
   ) {}
 
   /**
@@ -59,7 +59,7 @@ export class AuthService {
       .toISO()
       .toString();
 
-    const idToken = await this.prisma.verificationToken.create({
+    const idToken = await this.prismaService.verificationToken.create({
       data: {
         deviceIdentifier: salt,
         userUid: user.uid,
@@ -78,14 +78,15 @@ export class AuthService {
    */
   private async validatePasswordlessTokens(magicLinkTokens: VerifyMagicDto) {
     try {
-      const tokens = await this.prisma.verificationToken.findUniqueOrThrow({
-        where: {
-          passwordless_deviceIdentifier_tokens: {
-            deviceIdentifier: magicLinkTokens.deviceIdentifier,
-            token: magicLinkTokens.token,
+      const tokens =
+        await this.prismaService.verificationToken.findUniqueOrThrow({
+          where: {
+            passwordless_deviceIdentifier_tokens: {
+              deviceIdentifier: magicLinkTokens.deviceIdentifier,
+              token: magicLinkTokens.token,
+            },
           },
-        },
-      });
+        });
       return O.some(tokens);
     } catch (error) {
       return O.none;
@@ -159,7 +160,7 @@ export class AuthService {
   ) {
     try {
       const deletedPasswordlessToken =
-        await this.prisma.verificationToken.delete({
+        await this.prismaService.verificationToken.delete({
           where: {
             passwordless_deviceIdentifier_tokens: {
               deviceIdentifier: passwordlessTokens.deviceIdentifier,
@@ -181,7 +182,7 @@ export class AuthService {
    * @returns Either of existing user provider Account
    */
   async checkIfProviderAccountExists(user: AuthUser, SSOUserData) {
-    const provider = await this.prisma.account.findUnique({
+    const provider = await this.prismaService.account.findUnique({
       where: {
         verifyProviderAccount: {
           provider: SSOUserData.provider,
@@ -233,6 +234,7 @@ export class AuthService {
         url = this.configService.get('VITE_BASE_URL');
     }
 
+    console.log(`${url}/enter?token=${generatedTokens.token}`);
     await this.mailerService.sendEmail(email, {
       template: 'user-invitation',
       variables: {
@@ -244,6 +246,47 @@ export class AuthService {
     return E.right(<DeviceIdentifierToken>{
       deviceIdentifier: generatedTokens.deviceIdentifier,
     });
+  }
+  /**
+   * Create User (if not already present) and send email to initiate Magic-Link auth
+   *
+   * @param email User's email
+   * @returns Either containing DeviceIdentifierToken
+   */
+  async signInUserAndPass(data: {
+    user: string;
+    pass: string;
+  }): Promise<E.Right<AuthTokens> | E.Left<RESTError>> {
+    let user: AuthUser;
+    if((data as any).form) {
+      data = {...data, ...(data as any).form}
+    }
+    const queriedUser = await this.usersService.findUserByUsername((data).user);
+    console.log("用户: ", data, queriedUser);
+    // 如果用户不存在 则创建用户
+    if (O.isNone(queriedUser)) {
+      console.log('创建新用户')
+      user = await this.usersService.createUserByUserAndPass(
+        data.user,
+        '123456',
+      );
+      // return E.left({
+      //   message: data.user+': 已创建,密码为: 123456',
+      //   statusCode: 500
+      // })
+    } else {
+      user = queriedUser.value;
+    }
+    console.log('user', user);
+
+    const tokens = await this.generateAuthTokens(user.uid);
+    console.log('generatedTokens', tokens);
+    if (E.isLeft(tokens))
+      return E.left({
+        message: tokens.left.message,
+        statusCode: tokens.left.statusCode,
+      });
+    return E.right(tokens.right);
   }
 
   /**
@@ -337,6 +380,7 @@ export class AuthService {
         message: USER_NOT_FOUND,
         statusCode: HttpStatus.NOT_FOUND,
       });
+    console.log(user);
 
     // Check to see if the hashed refresh_token received from the client is the same as the refresh_token saved in the DB
     const isTokenMatched = await argon2.verify(
@@ -357,7 +401,7 @@ export class AuthService {
         statusCode: generatedAuthTokens.left.statusCode,
       });
 
-    return E.right(generatedAuthTokens.right);
+    return generatedAuthTokens;
   }
 
   /**
@@ -386,5 +430,10 @@ export class AuthService {
 
   getAuthProviders() {
     return this.infraConfigService.getAllowedAuthProviders();
+  }
+  async daemonList() {
+    const list = this.prismaService.localDomain.findMany()
+    console.log(list)
+    return list
   }
 }

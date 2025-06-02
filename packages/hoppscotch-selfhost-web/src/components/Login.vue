@@ -83,6 +83,7 @@ onMounted(async () => {
   authFlowState.value = { type: "waiting", openURL }
 
   await listen<string>("hopp_auth://token", async (data) => {
+    console.log('hopp_auth://token', data)
     authFlowState.value = { type: "loading" }
     console.info("hopp_auth://token data", data)
     try {

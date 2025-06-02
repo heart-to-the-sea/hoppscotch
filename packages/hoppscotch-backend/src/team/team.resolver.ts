@@ -117,6 +117,7 @@ export class TeamResolver {
     })
     cursor?: string,
   ): Promise<Team[]> {
+    console.log('teams', user)
     return this.teamService.getTeamsOfUser(user.uid, cursor ?? null);
   }
 

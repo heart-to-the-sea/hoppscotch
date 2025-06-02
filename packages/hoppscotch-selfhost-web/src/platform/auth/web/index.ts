@@ -3,13 +3,11 @@ import axios from "axios"
 import { BehaviorSubject, Subject } from "rxjs"
 import { Ref, ref, watch } from "vue"
 
-import { getService } from "@hoppscotch/common/modules/dioc"
 import {
   AuthEvent,
   AuthPlatformDef,
   HoppUser,
 } from "@hoppscotch/common/platform/auth"
-import { PersistenceService } from "@hoppscotch/common/services/persistence"
 
 import { getAllowedAuthProviders, updateUserDisplayName } from "./api"
 
@@ -17,10 +15,39 @@ export const authEvents$ = new Subject<AuthEvent | { event: "token_refresh" }>()
 const currentUser$ = new BehaviorSubject<HoppUser | null>(null)
 export const probableUser$ = new BehaviorSubject<HoppUser | null>(null)
 
+import { getService } from "@hoppscotch/common/modules/dioc"
+import { PersistenceService } from "@hoppscotch/common/services/persistence"
+
+let token = ""
+let refresh_token = ""
+let access_token = ""
+
 const persistenceService = getService(PersistenceService)
+const app = axios.create({
+  baseURL: '/'
+})
+app.interceptors.request.use(async (res) => {
+  token = (await persistenceService.getLocalConfig("access_token")) ?? "null"
+  refresh_token = (await persistenceService.getLocalConfig("refresh_token")) ?? "null"
+  access_token = (await persistenceService.getLocalConfig("access_token")) ?? "null"
+  let t = ""
+  console.log("资源token", access_token)
+  if (token) {
+    t = token
+    res.headers.Authorization = `Bearer ${t}`
+  }
+  if (refresh_token) {
+    res.headers.refresh_token = refresh_token
+  }
+  if (access_token) {
+    res.headers.access_token = access_token
+  }
+  console.log(res)
+  return res
+})
 
 async function logout() {
-  await axios.get(`${import.meta.env.VITE_BACKEND_API_URL}/auth/logout`, {
+  await app.get(`${import.meta.env.VITE_BACKEND_API_URL}/auth/logout`, {
     withCredentials: true,
   })
 }
@@ -34,13 +61,12 @@ async function signInUserWithGoogleFB() {
 }
 
 async function signInUserWithMicrosoftFB() {
-  window.location.href = `${
-    import.meta.env.VITE_BACKEND_API_URL
-  }/auth/microsoft`
+  window.location.href = `${import.meta.env.VITE_BACKEND_API_URL}/auth/microsoft`
 }
 
 async function getInitialUserDetails() {
-  const res = await axios.post<{
+
+  const res = await app.post<{
     data?: {
       me?: {
         uid: string
@@ -94,7 +120,6 @@ async function setInitialUser() {
   const res = await getInitialUserDetails()
 
   const error = res.errors && res.errors[0]
-
   // no cookies sent. so the user is not logged in
   if (error && error.message === "auth/cookies_not_found") {
     await setUser(null)
@@ -151,21 +176,28 @@ async function setInitialUser() {
 
 async function refreshToken() {
   try {
-    const res = await axios.get(
+    const res = await app.get(
       `${import.meta.env.VITE_BACKEND_API_URL}/auth/refresh`,
       {
         withCredentials: true,
       }
     )
-
+    console.log('res.status', res.status)
     const isSuccessful = res.status === 200
 
-    if (isSuccessful) {
-      authEvents$.next({
-        event: "token_refresh",
-      })
-    }
-
+    // if (isSuccessful) {
+    //   // await persistenceService.setLocalConfig(
+    //   //   "access_token",
+    //   //   res.data.access_token
+    //   // )
+    //   await persistenceService.setLocalConfig(
+    //     "refresh_token",
+    //     res.data.refresh_token
+    //   )
+      // authEvents$.next({
+      //   event: "token_refresh",
+      // })
+    // }
     return isSuccessful
   } catch (error) {
     return false
@@ -173,7 +205,7 @@ async function refreshToken() {
 }
 
 async function sendMagicLink(email: string) {
-  const res = await axios.post(
+  const res = await app.post(
     `${import.meta.env.VITE_BACKEND_API_URL}/auth/signin`,
     {
       email,
@@ -203,8 +235,12 @@ export const def: AuthPlatformDef = {
   getCurrentUser: () => currentUser$.value,
   getProbableUser: () => probableUser$.value,
 
-  getBackendHeaders() {
-    return {}
+  getBackendHeaders: () => {
+    return {
+      Authorization: `Bearer ${access_token}`,
+      access_token: access_token,
+      refresh_token: refresh_token,
+    }
   },
   getGQLClientOptions() {
     return {
@@ -305,7 +341,7 @@ export const def: AuthPlatformDef = {
     const deviceIdentifier =
       await persistenceService.getLocalConfig("deviceIdentifier")
 
-    await axios.post(
+    await app.post(
       `${import.meta.env.VITE_BACKEND_API_URL}/auth/verify`,
       {
         token: token,
@@ -315,6 +351,10 @@ export const def: AuthPlatformDef = {
         withCredentials: true,
       }
     )
+  },
+
+  signInWithUserAndPass: (form: { user: string, pass: string }) => {
+    return app.post(`${import.meta.env.VITE_BACKEND_API_URL}/auth/siginUserAndPass`, form)
   },
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async setEmailAddress(_email: string) {
@@ -347,7 +387,10 @@ export const def: AuthPlatformDef = {
     currentUser$.next(null)
 
     await persistenceService.removeLocalConfig("login_state")
+    await persistenceService.removeLocalConfig("login_state")
 
+    await persistenceService.removeLocalConfig("access_token")
+    await persistenceService.removeLocalConfig("refresh_token")
     authEvents$.next({
       event: "logout",
     })

@@ -162,6 +162,14 @@ export const auth = {
   },
 
   signInWithEmail: (email: string) => sendMagicLink(email),
+  /**
+   * 用户名密码登录
+   * @param form
+   * @returns
+   */
+  signInWithUserAndPass: (form: any) => {
+    return Boolean
+  },
 
   isSignInWithEmailLink: (url: string) => {
     const urlObject = new URL(url);
@@ -213,14 +221,14 @@ export const auth = {
 
   processMagicLink: async () => {
     if (auth.isSignInWithEmailLink(window.location.href)) {
-      const deviceIdentifier = getLocalConfig('deviceIdentifier');
+      // const deviceIdentifier = getLocalConfig('deviceIdentifier');
 
-      if (!deviceIdentifier) {
-        throw new Error(
-          'Device Identifier not found, you can only signin from the browser you generated the magic link'
-        );
-      }
-
+      // if (!deviceIdentifier) {
+      //   throw new Error(
+      //     'Device Identifier not found, you can only signin from the browser you generated the magic link'
+      //   );
+      // }
+      // 使用链接登录
       await auth.signInWithEmailLink(window.location.href);
 
       removeLocalConfig('deviceIdentifier');

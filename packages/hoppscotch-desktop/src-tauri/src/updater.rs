@@ -4,28 +4,29 @@ use tauri_plugin_updater::UpdaterExt;
 #[tauri::command]
 pub async fn check_updates_available(app: tauri::AppHandle) -> Result<bool, String> {
     tracing::info!("Checking for updates...");
-    let updater = match app.updater() {
-        Ok(updater) => updater,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to initialize updater");
-            return Ok(false);
-        }
-    };
+    return Ok(false)
+    // let updater = match app.updater() {
+    //     Ok(updater) => updater,
+    //     Err(e) => {
+    //         tracing::error!(error = %e, "Failed to initialize updater");
+    //         return Ok(false);
+    //     }
+    // };
 
-    match updater.check().await {
-        Ok(Some(_update)) => {
-            tracing::info!("Update available");
-            Ok(true)
-        }
-        Ok(None) => {
-            tracing::info!("No updates available");
-            Ok(false)
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to check for updates");
-            Err(format!("Failed to check for updates: {}", e))
-        }
-    }
+    // match updater.check().await {
+    //     Ok(Some(_update)) => {
+    //         tracing::info!("Update available");
+    //         Ok(true)
+    //     }
+    //     Ok(None) => {
+    //         tracing::info!("No updates available");
+    //         Ok(false)
+    //     }
+    //     Err(e) => {
+    //         tracing::error!(error = %e, "Failed to check for updates");
+    //         Err(format!("Failed to check for updates: {}", e))
+    //     }
+    // }
 }
 
 #[tauri::command]

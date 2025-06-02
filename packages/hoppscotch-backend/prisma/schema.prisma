@@ -91,6 +91,8 @@ model TeamEnvironment {
 model User {
   uid                  String                @id @default(cuid())
   displayName          String?
+  username             String?
+  password             String?
   email                String?               @unique
   photoURL             String?
   isAdmin              Boolean               @default(false)
@@ -242,4 +244,9 @@ model InfraToken {
   expiresOn  DateTime? @db.Timestamp(3)
   createdOn  DateTime  @default(now()) @db.Timestamp(3)
   updatedOn  DateTime  @default(now()) @db.Timestamp(3)
+}
+
+model LocalDomain {
+  id        String @id @default(cuid())
+  daemon    String?
 }

@@ -26,7 +26,7 @@ import { TeamAccessRole } from 'src/team/team.model';
 @Injectable()
 export class UserService {
   constructor(
-    private readonly prisma: PrismaService,
+    private prisma: PrismaService,
     private readonly pubsub: PubSubService,
   ) {}
 
@@ -72,6 +72,28 @@ export class UserService {
         },
       },
     });
+    if (!user) return O.none;
+    return O.some(user);
+  }
+  /**
+   * Find User with given email id
+   *
+   * @param username User's name
+   * @returns Option of found User
+   */
+  async findUserByUsername(
+    username: string,
+  ): Promise<O.None | O.Some<AuthUser>> {
+    console.log('username=======>', username)
+    const user = await this.prisma.user.findFirst({
+      where: {
+        username: {
+          equals: username,
+          mode: "default"
+        },
+      },
+    });
+    console.log(user);
     if (!user) return O.none;
     return O.some(user);
   }
@@ -154,7 +176,22 @@ export class UserService {
 
     return createdUser;
   }
+  /**
+   * Create a new User when logged in via a Magic Link
+   *
+   * @param email User's Email
+   * @returns Created User
+   */
+  async createUserByUserAndPass(user: string, pass: string) {
+    const createdUser = await this.prisma.user.create({
+      data: {
+        username: user,
+        password: pass,
+      },
+    });
 
+    return createdUser;
+  }
   /**
    * Create a new User when logged in via a SSO provider
    *

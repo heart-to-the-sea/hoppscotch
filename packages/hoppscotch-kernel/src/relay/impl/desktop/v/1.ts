@@ -135,6 +135,7 @@ export const implementation: VersionedAPI<RelayV1> = {
                 once: () => () => {},
                 off: () => {}
             }
+            console.log('request==================>', request)
 
             const responsePromise = relayRequestToNativeAdapter(request)
                 .then(request => {
@@ -155,6 +156,7 @@ export const implementation: VersionedAPI<RelayV1> = {
                         security: request.security,
                         proxy: request.proxy,
                     }
+                    console.log("=========>>", request)
 
                     return execute(pluginRequest)
                 })

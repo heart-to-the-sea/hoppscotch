@@ -1,426 +1,390 @@
-import { HttpStatus } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Account, VerificationToken } from '@prisma/client';
-import { mockDeep } from 'jest-mock-extended';
+import { HttpStatus, Injectable } from '@nestjs/common';
+import { MailerService } from 'src/mailer/mailer.service';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { UserService } from 'src/user/user.service';
+import { VerifyMagicDto } from './dto/verify-magic.dto';
+import { DateTime } from 'luxon';
+import * as argon2 from 'argon2';
+import * as bcrypt from 'bcrypt';
+import * as O from 'fp-ts/Option';
+import * as E from 'fp-ts/Either';
+import { DeviceIdentifierToken } from 'src/types/Passwordless';
 import {
   INVALID_EMAIL,
   INVALID_MAGIC_LINK_DATA,
-  INVALID_REFRESH_TOKEN,
-  MAGIC_LINK_EXPIRED,
   VERIFICATION_TOKEN_DATA_NOT_FOUND,
+  MAGIC_LINK_EXPIRED,
   USER_NOT_FOUND,
+  INVALID_REFRESH_TOKEN,
 } from 'src/errors';
-import { MailerService } from 'src/mailer/mailer.service';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { AuthUser } from 'src/types/AuthUser';
-import { UserService } from 'src/user/user.service';
-import { AuthService } from './auth.service';
-import * as O from 'fp-ts/Option';
-import { VerifyMagicDto } from './dto/verify-magic.dto';
-import * as E from 'fp-ts/Either';
+import { validateEmail } from 'src/utils';
+import {
+  AccessTokenPayload,
+  AuthTokens,
+  RefreshTokenPayload,
+} from 'src/types/AuthTokens';
+import { JwtService } from '@nestjs/jwt';
+import { RESTError } from 'src/types/RESTError';
+import { AuthUser, IsAdmin } from 'src/types/AuthUser';
+import { VerificationToken } from '@prisma/client';
+import { Origin } from './helper';
 import { ConfigService } from '@nestjs/config';
 import { InfraConfigService } from 'src/infra-config/infra-config.service';
 
-const mockPrisma = mockDeep<PrismaService>();
-const mockUser = mockDeep<UserService>();
-const mockJWT = mockDeep<JwtService>();
-const mockMailer = mockDeep<MailerService>();
-const mockConfigService = mockDeep<ConfigService>();
-const mockInfraConfigService = mockDeep<InfraConfigService>();
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly usersService: UserService,
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService,
+    private readonly mailerService: MailerService,
+    private readonly configService: ConfigService,
+    private readonly infraConfigService: InfraConfigService,
+  ) {}
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-const authService = new AuthService(
-  mockUser,
-  mockPrisma,
-  mockJWT,
-  mockMailer,
-  mockConfigService,
-  mockInfraConfigService,
-);
-
-const currentTime = new Date();
-
-const user: AuthUser = {
-  uid: '123344',
-  email: 'dwight@dundermifflin.com',
-  displayName: 'Dwight Schrute',
-  photoURL: 'https://en.wikipedia.org/wiki/Dwight_Schrute',
-  isAdmin: false,
-  refreshToken: 'hbfvdkhjbvkdvdfjvbnkhjb',
-  lastLoggedOn: currentTime,
-  lastActiveOn: currentTime,
-  createdOn: currentTime,
-  currentGQLSession: {},
-  currentRESTSession: {},
-};
-
-const passwordlessData: VerificationToken = {
-  deviceIdentifier: 'k23hb7u7gdcujhb',
-  token: 'jhhj24sdjvl',
-  userUid: user.uid,
-  expiresOn: new Date(),
-};
-
-const magicLinkVerify: VerifyMagicDto = {
-  deviceIdentifier: 'Dscdc',
-  token: 'SDcsdc',
-};
-
-const accountDetails: Account = {
-  id: '123dcdc',
-  userId: user.uid,
-  provider: 'email',
-  providerAccountId: user.uid,
-  providerRefreshToken: 'dscsdc',
-  providerAccessToken: 'sdcsdcsdc',
-  providerScope: 'user.email',
-  loggedIn: currentTime,
-};
-
-let nowPlus30 = new Date();
-nowPlus30.setMinutes(nowPlus30.getMinutes() + 30000);
-nowPlus30 = new Date(nowPlus30);
-
-describe('signInMagicLink', () => {
-  test('Should throw error if email is not in valid format', async () => {
-    const result = await authService.signInMagicLink('bbbgmail.com', 'admin');
-    expect(result).toEqualLeft({
-      message: INVALID_EMAIL,
-      statusCode: HttpStatus.BAD_REQUEST,
-    });
-  });
-
-  test('Should successfully create a new user account and return the passwordless details', async () => {
-    // check to see if user exists, return none
-    mockUser.findUserByEmail.mockResolvedValue(O.none);
-    // create new user
-    mockUser.createUserViaMagicLink.mockResolvedValue(user);
-    // create new entry in VerificationToken table
-    mockPrisma.verificationToken.create.mockResolvedValueOnce(passwordlessData);
-    // Read env variable 'MAGIC_LINK_TOKEN_VALIDITY' from config service
-    mockConfigService.get.mockReturnValue('3');
-
-    const result = await authService.signInMagicLink(
-      'dwight@dundermifflin.com',
-      'admin',
+  /**
+   * Generate Id and token for email Magic-Link auth
+   *
+   * @param user User Object
+   * @returns Created VerificationToken token
+   */
+  private async generateMagicLinkTokens(user: AuthUser) {
+    const salt = await bcrypt.genSalt(
+      parseInt(this.configService.get('TOKEN_SALT_COMPLEXITY')),
     );
-    expect(result).toEqualRight({
-      deviceIdentifier: passwordlessData.deviceIdentifier,
+    const expiresOn = DateTime.now()
+      .plus({
+        hours: parseInt(this.configService.get('MAGIC_LINK_TOKEN_VALIDITY')),
+      })
+      .toISO()
+      .toString();
+
+    const idToken = await this.prisma.verificationToken.create({
+      data: {
+        deviceIdentifier: salt,
+        userUid: user.uid,
+        expiresOn: expiresOn,
+      },
     });
-  });
 
-  test('Should successfully return the passwordless details for a pre-existing user account', async () => {
-    // check to see if user exists, return error
-    mockUser.findUserByEmail.mockResolvedValueOnce(O.some(user));
-    // create new entry in VerificationToken table
-    mockPrisma.verificationToken.create.mockResolvedValueOnce(passwordlessData);
+    return idToken;
+  }
 
-    const result = await authService.signInMagicLink(
-      'dwight@dundermifflin.com',
-      'admin',
+  /**
+   * Check if VerificationToken exist or not
+   *
+   * @param magicLinkTokens Object containing deviceIdentifier and token
+   * @returns Option of VerificationToken token
+   */
+  private async validatePasswordlessTokens(magicLinkTokens: VerifyMagicDto) {
+    try {
+      const tokens = await this.prisma.verificationToken.findUniqueOrThrow({
+        where: {
+          passwordless_deviceIdentifier_tokens: {
+            deviceIdentifier: magicLinkTokens.deviceIdentifier,
+            token: magicLinkTokens.token,
+          },
+        },
+      });
+      return O.some(tokens);
+    } catch (error) {
+      return O.none;
+    }
+  }
+
+  /**
+   * Generate new refresh token for user
+   *
+   * @param userUid User Id
+   * @returns Generated refreshToken
+   */
+  private async generateRefreshToken(userUid: string) {
+    const refreshTokenPayload: RefreshTokenPayload = {
+      iss: this.configService.get('VITE_BASE_URL'),
+      sub: userUid,
+      aud: [this.configService.get('VITE_BASE_URL')],
+    };
+
+    const refreshToken = await this.jwtService.sign(refreshTokenPayload, {
+      expiresIn: this.configService.get('REFRESH_TOKEN_VALIDITY'), //7 Days
+    });
+
+    const refreshTokenHash = await argon2.hash(refreshToken);
+
+    const updatedUser = await this.usersService.updateUserRefreshToken(
+      refreshTokenHash,
+      userUid,
     );
-    expect(result).toEqualRight({
-      deviceIdentifier: passwordlessData.deviceIdentifier,
-    });
-  });
-});
+    if (E.isLeft(updatedUser))
+      return E.left(<RESTError>{
+        message: updatedUser.left,
+        statusCode: HttpStatus.NOT_FOUND,
+      });
 
-describe('verifyMagicLinkTokens', () => {
-  test('Should throw INVALID_MAGIC_LINK_DATA if data is invalid', async () => {
-    mockPrisma.verificationToken.findUniqueOrThrow.mockRejectedValueOnce(
-      'NotFoundError',
-    );
+    return E.right(refreshToken);
+  }
 
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualLeft({
-      message: INVALID_MAGIC_LINK_DATA,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
+  /**
+   * Generate access and refresh token pair
+   *
+   * @param userUid User ID
+   * @returns Either of generated AuthTokens
+   */
+  async generateAuthTokens(userUid: string) {
+    const accessTokenPayload: AccessTokenPayload = {
+      iss: this.configService.get('VITE_BASE_URL'),
+      sub: userUid,
+      aud: [this.configService.get('VITE_BASE_URL')],
+    };
 
-  test('Should throw USER_NOT_FOUND if user is invalid', async () => {
-    // validatePasswordlessTokens
-    mockPrisma.verificationToken.findUniqueOrThrow.mockResolvedValueOnce(
-      passwordlessData,
-    );
-    // findUserById
-    mockUser.findUserById.mockResolvedValue(O.none);
+    const refreshToken = await this.generateRefreshToken(userUid);
+    if (E.isLeft(refreshToken)) return E.left(refreshToken.left);
 
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualLeft({
-      message: USER_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-
-  test('Should successfully return auth token pair with provider account existing', async () => {
-    // validatePasswordlessTokens
-    mockPrisma.verificationToken.findUniqueOrThrow.mockResolvedValueOnce({
-      ...passwordlessData,
-      expiresOn: nowPlus30,
-    });
-    // findUserById
-    mockUser.findUserById.mockResolvedValue(O.some(user));
-    // checkIfProviderAccountExists
-    mockPrisma.account.findUnique.mockResolvedValueOnce(accountDetails);
-    // mockPrisma.account.findUnique.mockResolvedValueOnce(null);
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(E.right(user));
-    // deletePasswordlessVerificationToken
-    mockPrisma.verificationToken.delete.mockResolvedValueOnce(passwordlessData);
-    // usersService.updateUserLastLoggedOn
-    mockUser.updateUserLastLoggedOn.mockResolvedValue(E.right(true));
-
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualRight({
-      access_token: user.refreshToken,
-      refresh_token: user.refreshToken,
-    });
-  });
-
-  test('Should successfully return auth token pair with provider account not existing', async () => {
-    // validatePasswordlessTokens
-    mockPrisma.verificationToken.findUniqueOrThrow.mockResolvedValueOnce({
-      ...passwordlessData,
-      expiresOn: nowPlus30,
-    });
-    // findUserById
-    mockUser.findUserById.mockResolvedValue(O.some(user));
-    // checkIfProviderAccountExists
-    mockPrisma.account.findUnique.mockResolvedValueOnce(null);
-    mockUser.createUserSSO.mockResolvedValueOnce(user);
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(E.right(user));
-    // deletePasswordlessVerificationToken
-    mockPrisma.verificationToken.delete.mockResolvedValueOnce(passwordlessData);
-    // usersService.updateUserLastLoggedOn
-    mockUser.updateUserLastLoggedOn.mockResolvedValue(E.right(true));
-
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualRight({
-      access_token: user.refreshToken,
-      refresh_token: user.refreshToken,
-    });
-  });
-
-  test('Should throw MAGIC_LINK_EXPIRED if passwordless token is expired', async () => {
-    // validatePasswordlessTokens
-    mockPrisma.verificationToken.findUniqueOrThrow.mockResolvedValueOnce({
-      ...passwordlessData,
-      expiresOn: new Date('2020-01-01T00:00:00Z'),
-    });
-    // findUserById
-    mockUser.findUserById.mockResolvedValue(O.some(user));
-    // checkIfProviderAccountExists
-    mockPrisma.account.findUnique.mockResolvedValueOnce(accountDetails);
-
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualLeft({
-      message: MAGIC_LINK_EXPIRED,
-      statusCode: HttpStatus.UNAUTHORIZED,
-    });
-  });
-
-  test('Should throw USER_NOT_FOUND when updating refresh tokens fails', async () => {
-    // validatePasswordlessTokens
-    mockPrisma.verificationToken.findUniqueOrThrow.mockResolvedValueOnce({
-      ...passwordlessData,
-      expiresOn: nowPlus30,
-    });
-    // findUserById
-    mockUser.findUserById.mockResolvedValue(O.some(user));
-    // checkIfProviderAccountExists
-    mockPrisma.account.findUnique.mockResolvedValueOnce(accountDetails);
-    // mockPrisma.account.findUnique.mockResolvedValueOnce(null);
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(
-      E.left(USER_NOT_FOUND),
-    );
-
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualLeft({
-      message: USER_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-
-  test('Should throw PASSWORDLESS_DATA_NOT_FOUND when deleting passwordlessVerification entry from DB', async () => {
-    // validatePasswordlessTokens
-    mockPrisma.verificationToken.findUniqueOrThrow.mockResolvedValueOnce({
-      ...passwordlessData,
-      expiresOn: nowPlus30,
-    });
-    // findUserById
-    mockUser.findUserById.mockResolvedValue(O.some(user));
-    // checkIfProviderAccountExists
-    mockPrisma.account.findUnique.mockResolvedValueOnce(accountDetails);
-    // mockPrisma.account.findUnique.mockResolvedValueOnce(null);
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(E.right(user));
-    // deletePasswordlessVerificationToken
-    mockPrisma.verificationToken.delete.mockRejectedValueOnce('RecordNotFound');
-
-    const result = await authService.verifyMagicLinkTokens(magicLinkVerify);
-    expect(result).toEqualLeft({
-      message: VERIFICATION_TOKEN_DATA_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-});
-
-describe('generateAuthTokens', () => {
-  test('Should successfully generate tokens with valid inputs', async () => {
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(E.right(user));
-
-    const result = await authService.generateAuthTokens(user.uid);
-    expect(result).toEqualRight({
-      access_token: 'hbfvdkhjbvkdvdfjvbnkhjb',
-      refresh_token: 'hbfvdkhjbvkdvdfjvbnkhjb',
-    });
-  });
-
-  test('Should throw USER_NOT_FOUND when updating refresh tokens fails', async () => {
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(
-      E.left(USER_NOT_FOUND),
-    );
-
-    const result = await authService.generateAuthTokens(user.uid);
-    expect(result).toEqualLeft({
-      message: USER_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-});
-
-jest.mock('argon2', () => {
-  return {
-    verify: jest.fn((x, y) => {
-      if (y === null) return false;
-      return true;
-    }),
-    hash: jest.fn(),
-  };
-});
-
-describe('refreshAuthTokens', () => {
-  test('Should throw USER_NOT_FOUND when updating refresh tokens fails', async () => {
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue(user.refreshToken);
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(
-      E.left(USER_NOT_FOUND),
-    );
-
-    const result = await authService.refreshAuthTokens(
-      '$argon2id$v=19$m=65536,t=3,p=4$MvVOam2clCOLtJFGEE26ZA$czvA5ez9hz+A/LML8QRgqgaFuWa5JcbwkH6r+imTQbs',
-      user,
-    );
-    expect(result).toEqualLeft({
-      message: USER_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-
-  test('Should throw USER_NOT_FOUND when user is invalid', async () => {
-    const result = await authService.refreshAuthTokens(
-      'jshdcbjsdhcbshdbc',
-      null,
-    );
-    expect(result).toEqualLeft({
-      message: USER_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-
-  test('Should successfully refresh the tokens and generate a new auth token pair', async () => {
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue('sdhjcbjsdhcbshjdcb');
-    // UpdateUserRefreshToken
-    mockUser.updateUserRefreshToken.mockResolvedValueOnce(
-      E.right({
-        ...user,
-        refreshToken: 'sdhjcbjsdhcbshjdcb',
+    return E.right(<AuthTokens>{
+      access_token: await this.jwtService.sign(accessTokenPayload, {
+        expiresIn: this.configService.get('ACCESS_TOKEN_VALIDITY'), //1 Day
       }),
+      refresh_token: refreshToken.right,
+    });
+  }
+
+  /**
+   * Deleted used VerificationToken tokens
+   *
+   * @param passwordlessTokens VerificationToken entry to delete from DB
+   * @returns Either of deleted VerificationToken token
+   */
+  private async deleteMagicLinkVerificationTokens(
+    passwordlessTokens: VerificationToken,
+  ) {
+    try {
+      const deletedPasswordlessToken =
+        await this.prisma.verificationToken.delete({
+          where: {
+            passwordless_deviceIdentifier_tokens: {
+              deviceIdentifier: passwordlessTokens.deviceIdentifier,
+              token: passwordlessTokens.token,
+            },
+          },
+        });
+      return E.right(deletedPasswordlessToken);
+    } catch (error) {
+      return E.left(VERIFICATION_TOKEN_DATA_NOT_FOUND);
+    }
+  }
+
+  /**
+   * Verify if Provider account exists for User
+   *
+   * @param user User Object
+   * @param SSOUserData User data from SSO providers (Magic,Google,Github,Microsoft)
+   * @returns Either of existing user provider Account
+   */
+  async checkIfProviderAccountExists(user: AuthUser, SSOUserData) {
+    const provider = await this.prisma.account.findUnique({
+      where: {
+        verifyProviderAccount: {
+          provider: SSOUserData.provider,
+          providerAccountId: SSOUserData.id,
+        },
+      },
+    });
+
+    if (!provider) return O.none;
+
+    return O.some(provider);
+  }
+
+  /**
+   * Create User (if not already present) and send email to initiate Magic-Link auth
+   *
+   * @param email User's email
+   * @returns Either containing DeviceIdentifierToken
+   */
+  async signInMagicLink(email: string, origin: string) {
+    if (!validateEmail(email))
+      return E.left({
+        message: INVALID_EMAIL,
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+
+    let user: AuthUser;
+    const queriedUser = await this.usersService.findUserByEmail(email);
+
+    if (O.isNone(queriedUser)) {
+      user = await this.usersService.createUserViaMagicLink(email);
+    } else {
+      user = queriedUser.value;
+    }
+
+    const generatedTokens = await this.generateMagicLinkTokens(user);
+
+    // check to see if origin is valid
+    let url: string;
+    switch (origin) {
+      case Origin.ADMIN:
+        url = this.configService.get('VITE_ADMIN_URL');
+        break;
+      case Origin.APP:
+        url = this.configService.get('VITE_BASE_URL');
+        break;
+      default:
+        // if origin is invalid by default set URL to Hoppscotch-App
+        url = this.configService.get('VITE_BASE_URL');
+    }
+
+    await this.mailerService.sendEmail(email, {
+      template: 'user-invitation',
+      variables: {
+        inviteeEmail: email,
+        magicLink: `${url}/enter?token=${generatedTokens.token}`,
+      },
+    });
+
+    return E.right(<DeviceIdentifierToken>{
+      deviceIdentifier: generatedTokens.deviceIdentifier,
+    });
+  }
+
+  /**
+   * Verify and authenticate user from received data for Magic-Link
+   *
+   * @param magicLinkIDTokens magic-link verification tokens from client
+   * @returns Either of generated AuthTokens
+   */
+  async verifyMagicLinkTokens(
+    magicLinkIDTokens: VerifyMagicDto,
+  ): Promise<E.Right<AuthTokens> | E.Left<RESTError>> {
+    const passwordlessTokens =
+      await this.validatePasswordlessTokens(magicLinkIDTokens);
+    if (O.isNone(passwordlessTokens))
+      return E.left({
+        message: INVALID_MAGIC_LINK_DATA,
+        statusCode: HttpStatus.NOT_FOUND,
+      });
+
+    const user = await this.usersService.findUserById(
+      passwordlessTokens.value.userUid,
+    );
+    if (O.isNone(user))
+      return E.left({
+        message: USER_NOT_FOUND,
+        statusCode: HttpStatus.NOT_FOUND,
+      });
+
+    /**
+     * * Check to see if entry for Magic-Link is present in the Account table for user
+     * * If user was created with another provider findUserById may return true
+     */
+    const profile = {
+      provider: 'magic',
+      id: user.value.email,
+    };
+    const providerAccountExists = await this.checkIfProviderAccountExists(
+      user.value,
+      profile,
     );
 
-    const result = await authService.refreshAuthTokens(
-      '$argon2id$v=19$m=65536,t=3,p=4$MvVOam2clCOLtJFGEE26ZA$czvA5ez9hz+A/LML8QRgqgaFuWa5JcbwkH6r+imTQbs',
-      user,
+    if (O.isNone(providerAccountExists)) {
+      await this.usersService.createProviderAccount(
+        user.value,
+        null,
+        null,
+        profile,
+      );
+    }
+
+    const currentTime = DateTime.now().toISO();
+    if (currentTime > passwordlessTokens.value.expiresOn.toISOString())
+      return E.left({
+        message: MAGIC_LINK_EXPIRED,
+        statusCode: HttpStatus.UNAUTHORIZED,
+      });
+
+    const tokens = await this.generateAuthTokens(
+      passwordlessTokens.value.userUid,
     );
-    expect(result).toEqualRight({
-      access_token: 'sdhjcbjsdhcbshjdcb',
-      refresh_token: 'sdhjcbjsdhcbshjdcb',
-    });
-  });
+    if (E.isLeft(tokens))
+      return E.left({
+        message: tokens.left.message,
+        statusCode: tokens.left.statusCode,
+      });
 
-  test('Should throw INVALID_REFRESH_TOKEN when the refresh token is invalid', async () => {
-    // generateAuthTokens
-    mockJWT.sign.mockReturnValue('sdhjcbjsdhcbshjdcb');
-    mockPrisma.user.update.mockResolvedValueOnce({
-      ...user,
-      refreshToken: 'sdhjcbjsdhcbshjdcb',
-    });
+    const deletedPasswordlessToken =
+      await this.deleteMagicLinkVerificationTokens(passwordlessTokens.value);
+    if (E.isLeft(deletedPasswordlessToken))
+      return E.left({
+        message: deletedPasswordlessToken.left,
+        statusCode: HttpStatus.NOT_FOUND,
+      });
 
-    const result = await authService.refreshAuthTokens(null, user);
-    expect(result).toEqualLeft({
-      message: INVALID_REFRESH_TOKEN,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
-});
+    this.usersService.updateUserLastLoggedOn(passwordlessTokens.value.userUid);
 
-describe('verifyAdmin', () => {
-  test('should successfully elevate user to admin when userCount is 1 ', async () => {
-    // getUsersCount
-    mockUser.getUsersCount.mockResolvedValueOnce(1);
-    // makeAdmin
-    mockUser.makeAdmin.mockResolvedValueOnce(
-      E.right({
-        ...user,
-        isAdmin: true,
-      }),
+    return E.right(tokens.right);
+  }
+
+  /**
+   * Refresh refresh and auth tokens
+   *
+   * @param hashedRefreshToken Hashed refresh token received from client
+   * @param user User Object
+   * @returns Either of generated AuthTokens
+   */
+  async refreshAuthTokens(hashedRefreshToken: string, user: AuthUser) {
+    // Check to see user is valid
+    if (!user)
+      return E.left({
+        message: USER_NOT_FOUND,
+        statusCode: HttpStatus.NOT_FOUND,
+      });
+
+    // Check to see if the hashed refresh_token received from the client is the same as the refresh_token saved in the DB
+    const isTokenMatched = await argon2.verify(
+      user.refreshToken,
+      hashedRefreshToken,
     );
+    if (!isTokenMatched)
+      return E.left({
+        message: INVALID_REFRESH_TOKEN,
+        statusCode: HttpStatus.NOT_FOUND,
+      });
 
-    const result = await authService.verifyAdmin(user);
-    expect(result).toEqualRight({ isAdmin: true });
-  });
+    // if tokens match, generate new pair of auth tokens
+    const generatedAuthTokens = await this.generateAuthTokens(user.uid);
+    if (E.isLeft(generatedAuthTokens))
+      return E.left({
+        message: generatedAuthTokens.left.message,
+        statusCode: generatedAuthTokens.left.statusCode,
+      });
 
-  test('should return true if user is already an admin', async () => {
-    const result = await authService.verifyAdmin({ ...user, isAdmin: true });
-    expect(result).toEqualRight({ isAdmin: true });
-  });
+    return E.right(generatedAuthTokens.right);
+  }
 
-  test('should throw USERS_NOT_FOUND when userUid is invalid', async () => {
-    // getUsersCount
-    mockUser.getUsersCount.mockResolvedValueOnce(1);
-    // makeAdmin
-    mockUser.makeAdmin.mockResolvedValueOnce(E.left(USER_NOT_FOUND));
+  /**
+   * Verify is signed in User is an admin or not
+   *
+   * @param user User Object
+   * @returns Either of boolean if user is admin or not
+   */
+  async verifyAdmin(user: AuthUser) {
+    if (user.isAdmin) return E.right(<IsAdmin>{ isAdmin: true });
 
-    const result = await authService.verifyAdmin(user);
-    expect(result).toEqualLeft({
-      message: USER_NOT_FOUND,
-      statusCode: HttpStatus.NOT_FOUND,
-    });
-  });
+    const usersCount = await this.usersService.getUsersCount();
+    if (usersCount === 1) {
+      const elevatedUser = await this.usersService.makeAdmin(user.uid);
+      if (E.isLeft(elevatedUser))
+        return E.left(<RESTError>{
+          message: elevatedUser.left,
+          statusCode: HttpStatus.NOT_FOUND,
+        });
 
-  test('should return false when user is not an admin and userCount is greater than 1', async () => {
-    // getUsersCount
-    mockUser.getUsersCount.mockResolvedValueOnce(13);
+      return E.right(<IsAdmin>{ isAdmin: true });
+    }
 
-    const result = await authService.verifyAdmin(user);
-    expect(result).toEqualRight({ isAdmin: false });
-  });
-});
+    return E.right(<IsAdmin>{ isAdmin: false });
+  }
+
+  getAuthProviders() {
+    return this.infraConfigService.getAllowedAuthProviders();
+  }
+}

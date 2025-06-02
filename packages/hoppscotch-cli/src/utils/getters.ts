@@ -95,11 +95,11 @@ export const getEffectiveFinalMetaData = (
       A.filterMap(({ key, value, description }) =>
         E.isRight(key) && E.isRight(value)
           ? O.some({
-              active: true,
-              key: key.right,
-              value: value.right,
-              description,
-            })
+            active: true,
+            key: key.right,
+            value: value.right,
+            description,
+          })
           : O.none
       )
     )
@@ -190,7 +190,7 @@ export const getResourceContents = async (
   }
 
   if (accessToken && !fileExistsInPath) {
-    const resolvedServerUrl = serverUrl || "https://api.hoppscotch.io";
+    const resolvedServerUrl = serverUrl || '/';
 
     try {
       const separator = resolvedServerUrl.endsWith("/") ? "" : "/";

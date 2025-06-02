@@ -58,6 +58,7 @@ export type AuthPlatformDef = {
    * with something else
    */
   customLoginSelectorUI?: Component
+  signInWithUserAndPass:(form: {user: string,pass: string}) => any
 
   /**
    * Returns an observable that emits the current user as per the auth implementation.

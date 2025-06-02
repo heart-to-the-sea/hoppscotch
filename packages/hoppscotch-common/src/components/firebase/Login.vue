@@ -6,70 +6,30 @@
     @close="hideModal"
   >
     <template #body>
-      <template v-if="platform.auth.customLoginSelectorUI">
-        <component :is="platform.auth.customLoginSelectorUI" />
-      </template>
-
-      <template v-else-if="isLoadingAllowedAuthProviders">
-        <div class="flex justify-center">
-          <HoppSmartSpinner />
-        </div>
-      </template>
-
-      <template v-else>
-        <div v-if="mode === 'sign-in'" class="flex flex-col space-y-2">
-          <HoppSmartItem
-            v-for="provider in allowedAuthProviders"
-            :key="provider.id"
-            :loading="provider.isLoading.value"
-            :icon="provider.icon"
-            :label="provider.label"
-            @click="provider.action"
-          />
-
-          <hr v-if="additionalLoginItems.length > 0" />
-
-          <HoppSmartItem
-            v-for="loginItem in additionalLoginItems"
-            :key="loginItem.id"
-            :icon="loginItem.icon"
-            :label="loginItem.text(t)"
-            @click="doAdditionalLoginItemClickAction(loginItem)"
-          />
-        </div>
-        <form
-          v-if="mode === 'email'"
-          class="flex flex-col space-y-2"
-          @submit.prevent="signInWithEmail"
-        >
-          <HoppSmartInput
-            v-model="form.email"
-            type="email"
-            placeholder=" "
-            :label="t('auth.email')"
-            input-styles="floating-input"
-          />
-
-          <HoppButtonPrimary
-            :loading="signingInWithEmail"
-            type="submit"
-            :label="`${t('auth.send_magic_link')}`"
-          />
-        </form>
-        <div v-if="mode === 'email-sent'" class="flex flex-col px-4">
-          <div class="flex max-w-md flex-col items-center justify-center">
-            <icon-lucide-inbox class="h-6 w-6 text-accent" />
-            <h3 class="my-2 text-center text-lg">
-              {{ t("auth.we_sent_magic_link") }}
-            </h3>
-            <p class="text-center">
-              {{
-                t("auth.we_sent_magic_link_description", { email: form.email })
-              }}
-            </p>
-          </div>
-        </div>
-      </template>
+      <form
+        class="flex flex-col space-y-2"
+        @submit.prevent="signInWithUserAndPass"
+      >
+        <HoppSmartInput
+          v-model="form.user"
+          type="input"
+          placeholder=" "
+          label="用户名"
+          input-styles="floating-input"
+        />
+        <HoppSmartInput
+          v-model="form.pass"
+          type="password"
+          placeholder=" "
+          label="密码"
+          input-styles="floating-input"
+        />
+        <HoppButtonPrimary
+          :loading="signingInWithUserAndPass"
+          type="submit"
+          label="登录"
+        />
+      </form>
     </template>
     <template #footer>
       <div
@@ -160,6 +120,7 @@ const signingInWithGoogle = ref(false)
 const signingInWithGitHub = ref(false)
 const signingInWithMicrosoft = ref(false)
 const signingInWithEmail = ref(false)
+const signingInWithUserAndPass = ref(false)
 const mode = ref("sign-in")
 
 const tosLink = import.meta.env.VITE_APP_TOS_LINK
@@ -313,7 +274,6 @@ const signInWithMicrosoft = async () => {
 
 const signInWithEmail = async () => {
   signingInWithEmail.value = true
-
   await platform.auth
     .signInWithEmail(form.email)
     .then(async () => {
@@ -327,6 +287,38 @@ const signInWithEmail = async () => {
     })
     .finally(() => {
       signingInWithEmail.value = false
+    })
+}
+/**
+ * 账户密码方式输入
+ */
+const signInWithUserAndPass = async () => {
+  signingInWithUserAndPass.value = true
+  console.log(form)
+  await platform.auth
+    .signInWithUserAndPass(form)
+    .then(async (res) => {
+      console.log(res)
+      const tokens = res.data
+      await persistenceService.setLocalConfig(
+        "access_token",
+        tokens.access_token
+      )
+      await persistenceService.setLocalConfig(
+        "refresh_token",
+        tokens.refresh_token
+      )
+      window.location.href = "/"
+      mode.value = "userAndPass-sent"
+      await persistenceService.setLocalConfig("userAndPassForSignIn", form)
+    })
+    .catch((e) => {
+      console.error(e)
+      toast.error(e.message)
+      signingInWithUserAndPass.value = false
+    })
+    .finally(() => {
+      signingInWithUserAndPass.value = false
     })
 }
 

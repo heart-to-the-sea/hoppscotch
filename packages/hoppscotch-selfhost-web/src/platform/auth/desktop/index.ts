@@ -48,16 +48,26 @@ const persistenceService = getService(PersistenceService)
 const interceptorService = getService(KernelInterceptorService)
 
 async function logout() {
+
+  const accessToken = await persistenceService.getLocalConfig("access_token")
+  const refreshToken =
+    await persistenceService.getLocalConfig("refresh_token")
+
   const { response } = interceptorService.execute({
     id: Date.now(),
     url: `${import.meta.env.VITE_BACKEND_API_URL}/auth/logout`,
     version: "HTTP/1.1",
     method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    },
   })
 
   await response
-  await persistenceService.removeLocalConfig("refresh_token")
-  await persistenceService.removeLocalConfig("access_token")
+  await persistenceService.setLocalConfig("refresh_token", "")
+  await persistenceService.setLocalConfig("refresh_token", "")
 }
 
 async function signInUserWithGithubFB() {
@@ -97,6 +107,8 @@ async function getInitialUserDetails(): Promise<
       version: "HTTP/1.1",
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         "Content-Type": "application/json",
       },
       content: content.json({
@@ -147,10 +159,10 @@ async function setUser(user: HoppUserWithAuthDetail | null) {
   const userWithToken =
     user && accessToken && refreshToken
       ? {
-          ...user,
-          accessToken,
-          refreshToken,
-        }
+        ...user,
+        accessToken,
+        refreshToken,
+      }
       : null
 
   currentUser$.next(userWithToken)
@@ -163,6 +175,7 @@ async function setUser(user: HoppUserWithAuthDetail | null) {
 
 export async function setInitialUser() {
   isGettingInitialUser.value = true
+  console.log('setInitialUser', setInitialUser)
   const res = await getInitialUserDetails()
 
   // NOTE: This is required for further diagnosis,
@@ -218,7 +231,7 @@ export async function setInitialUser() {
 async function refreshToken() {
   try {
     const refreshToken =
-      await persistenceService.getLocalConfig("refresh_token")
+      await persistenceService.getLocalConfig("access_token")
     if (!refreshToken) return null
 
     const { response } = interceptorService.execute({
@@ -257,6 +270,10 @@ async function refreshToken() {
 }
 
 async function sendMagicLink(email: string) {
+
+  const accessToken = await persistenceService.getLocalConfig("access_token")
+  const refreshToken =
+    await persistenceService.getLocalConfig("refresh_token")
   const { response } = interceptorService.execute({
     id: Date.now(),
     url: `${import.meta.env.VITE_BACKEND_API_URL}/auth/signin?origin=desktop`,
@@ -264,6 +281,8 @@ async function sendMagicLink(email: string) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "access_token": accessToken,
+      Authorization: accessToken
     },
     content: content.json({ email }),
   })
@@ -282,23 +301,52 @@ async function sendMagicLink(email: string) {
 
   return res.right.data
 }
-
+async function signInWithUserAndPass(form: { user: string, pass: string }) {
+  console.log('桌面signInWithUserAndPass')
+  const accessToken = await persistenceService.getLocalConfig("access_token")
+  const refreshToken = await persistenceService.getLocalConfig("refresh_token")
+  const headers: any = {}
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+    headers.access_token = accessToken
+  }
+  const { response } = interceptorService.execute({
+    id: Date.now(),
+    url: `${import.meta.env.VITE_BACKEND_API_URL}/auth/siginUserAndPass`,
+    version: "HTTP/1.1",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...headers
+    },
+    content: content.json({ form }),
+  })
+  const responseBytes = await response
+  console.log(responseBytes)
+  if (E.isLeft(responseBytes)) {
+    return { error: "校验 未找到cookie" }
+  }
+  const res:any = parseBodyAsJSON<GQLResponse>(responseBytes.right.body)
+  console.log(res)
+  res.data = res.value
+  return res
+}
 async function setAuthCookies(headers: Headers) {
-  const cookieHeader = headers.get("set-cookie")
-  const cookies = cookieHeader ? cookieHeader.split(",") : []
+  // const cookieHeader = headers.get("set-cookie")
+  // const cookies = cookieHeader ? cookieHeader.split(",") : []
 
-  const accessTokenMatch = cookies.join(",").match(/access_token=([^;]+)/)
-  const refreshTokenMatch = cookies.join(",").match(/refresh_token=([^;]+)/)
+  // const accessTokenMatch = cookies.join(",").match(/access_token=([^;]+)/)
+  // const refreshTokenMatch = cookies.join(",").match(/refresh_token=([^;]+)/)
 
-  if (accessTokenMatch) {
-    const accessToken = accessTokenMatch[1]
-    await persistenceService.setLocalConfig("access_token", accessToken)
-  }
+  // if (accessTokenMatch) {
+  //   const accessToken = accessTokenMatch[1]
+  //   await persistenceService.setLocalConfig("access_token", accessToken)
+  // }
 
-  if (refreshTokenMatch) {
-    const refreshToken = refreshTokenMatch[1]
-    await persistenceService.setLocalConfig("refresh_token", refreshToken)
-  }
+  // if (refreshTokenMatch) {
+  //   const refreshToken = refreshTokenMatch[1]
+  //   await persistenceService.setLocalConfig("refresh_token", refreshToken)
+  // }
 }
 
 export const def: AuthPlatformDef = {
@@ -317,8 +365,9 @@ export const def: AuthPlatformDef = {
     const accessToken = currentUser$.value?.accessToken
     return accessToken
       ? {
-          Authorization: `Bearer ${accessToken}`,
-        }
+        Authorization: `Bearer ${accessToken}`,
+        access_token: accessToken,
+      }
       : ({} as Record<string, string>)
   },
 
@@ -328,25 +377,31 @@ export const def: AuthPlatformDef = {
       // For GraphQL subscriptions via WebSocket
       connectionParams: accessToken
         ? {
-            Authorization: `Bearer ${accessToken}`,
-          }
+          Authorization: `Bearer ${accessToken}`,
+          access_token: accessToken,
+        }
         : undefined,
       // For regular HTTP queries
       fetchOptions: {
         headers: accessToken
-          ? { Authorization: `Bearer ${accessToken}` }
+          ? {
+            Authorization: `Bearer ${accessToken}`,
+            access_token: accessToken,
+          }
           : undefined,
       },
     }
   },
 
   axiosPlatformConfig() {
+    debugger
     const accessToken = currentUser$.value?.accessToken
     return {
       headers: accessToken
         ? {
-            Authorization: `Bearer ${accessToken}`,
-          }
+          Authorization: `Bearer ${accessToken}`,
+          access_token: accessToken,
+        }
         : {},
     }
   },
@@ -378,6 +433,7 @@ export const def: AuthPlatformDef = {
   },
 
   async performAuthInit() {
+    debugger
     const loginState = await persistenceService.getLocalConfig("login_state")
     const probableUser = JSON.parse(loginState ?? "null")
     probableUser$.next(probableUser)
@@ -396,14 +452,18 @@ export const def: AuthPlatformDef = {
         if (accessToken && refreshToken) {
           await persistenceService.setLocalConfig("access_token", accessToken)
           await persistenceService.setLocalConfig("refresh_token", refreshToken)
+          await persistenceService.setLocalConfig("authorization", accessToken)
+          await this.signInWithEmailLink("", "")
+          await setInitialUser()
+          //
           return
         }
 
-        if (token) {
-          await persistenceService.setLocalConfig("verifyToken", token)
-          await this.signInWithEmailLink("", "")
-          await setInitialUser()
-        }
+        // if (token) {
+        //   await persistenceService.setLocalConfig("verifyToken", token)
+        //   await this.signInWithEmailLink("", "")
+        //   await setInitialUser()
+        // }
       }
     )
   },
@@ -429,6 +489,10 @@ export const def: AuthPlatformDef = {
     await sendMagicLink(email)
   },
 
+  async signInWithUserAndPass(form: { user: string, pass: string }) {
+    return await signInWithUserAndPass(form)
+  },
+
   async verifyEmailAddress() {
     return
   },
@@ -447,6 +511,9 @@ export const def: AuthPlatformDef = {
   },
 
   async signInWithEmailLink(_email: string, url: string) {
+
+    const accessToken = await persistenceService.getLocalConfig("access_token")
+    const refreshToken = await persistenceService.getLocalConfig("refresh_token")
     const deviceIdentifier =
       await persistenceService.getLocalConfig("deviceIdentifier")
 
@@ -468,6 +535,9 @@ export const def: AuthPlatformDef = {
       version: "HTTP/1.1",
       method: "POST",
       headers: {
+        Authorization: `Bearer ${accessToken}`,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         "Content-Type": "application/json",
       },
       content: content.json({
@@ -511,7 +581,9 @@ export const def: AuthPlatformDef = {
 
   async signOutUser() {
     await logout()
-
+    console.log("logout=++++++++++++>>")
+    await persistenceService.removeLocalConfig("access_token")
+    await persistenceService.removeLocalConfig("refresh_token")
     probableUser$.next(null)
     currentUser$.next(null)
     await persistenceService.removeLocalConfig("login_state")

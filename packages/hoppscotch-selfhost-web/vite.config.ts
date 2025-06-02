@@ -31,6 +31,12 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    proxy:{
+      '/proxy': {
+        target: "http://localhost:3170",
+        rewrite: (path) => path.replace(/^\/proxy/, ""),
+      }
+    }
   },
   preview: {
     port: 3000,

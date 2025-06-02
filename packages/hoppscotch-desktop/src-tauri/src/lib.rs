@@ -81,11 +81,11 @@ pub fn run() {
             ),
         ))
         .plugin(tauri_plugin_relay::init())
-        .invoke_handler(tauri::generate_handler![
-            hopp_auth_port,
-            updater::check_updates_available,
-            updater::install_updates_and_restart
-        ])
+        // .invoke_handler(tauri::generate_handler![
+        //     hopp_auth_port,
+        //     updater::check_updates_available,
+        //     updater::install_updates_and_restart
+        // ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

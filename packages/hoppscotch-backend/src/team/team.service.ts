@@ -45,6 +45,7 @@ export class TeamService implements UserDataHandler, OnModuleInit {
   }
 
   onUserDelete(user: AuthUser): T.Task<void> {
+    console.log(user)
     return this.deleteUserFromAllTeams(user.uid);
   }
 

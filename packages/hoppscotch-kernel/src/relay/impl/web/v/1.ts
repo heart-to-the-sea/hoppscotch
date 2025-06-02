@@ -246,6 +246,7 @@ export const implementation: VersionedAPI<RelayV1> = {
 
             return E.right(response)
           } catch (error) {
+            console.log('error-___>:', error)
             if (axios.isCancel(error)) {
               return E.left({ kind: "abort", message: "Request cancelled" })
             }

@@ -63,6 +63,7 @@ import { PubSubModule } from './pubsub/pubsub.module';
                 try {
                   const accessToken =
                     extractAccessTokenFromAuthRecords(connectionParams);
+                    console.log("accessToken", accessToken)
                   const authorization = `Bearer ${accessToken}`;
 
                   return { headers: { ...websocketHeaders, authorization } };
