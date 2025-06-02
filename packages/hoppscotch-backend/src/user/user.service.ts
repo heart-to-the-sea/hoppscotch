@@ -285,6 +285,24 @@ export class UserService {
     }
   }
 
+  async updateEmailAddress(user: AuthUser, profile) {
+    try {
+      const updatedUser = await this.prisma.user.update({
+        where: {
+          uid: user.uid,
+        },
+        data: {
+          email: !profile.email ? null : profile.email,
+          lastLoggedOn: new Date(),
+        },
+      });
+      return E.right(updatedUser);
+    } catch (error) {
+      return E.left(USER_NOT_FOUND);
+    }
+  }
+  
+
   /**
    * Update a user's sessions
    * @param user User object

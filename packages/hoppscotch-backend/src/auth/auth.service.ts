@@ -30,6 +30,7 @@ import { VerificationToken } from '@prisma/client';
 import { Origin } from './helper';
 import { ConfigService } from '@nestjs/config';
 import { InfraConfigService } from 'src/infra-config/infra-config.service';
+import { User } from 'src/user/user.model';
 
 @Injectable()
 export class AuthService {
@@ -435,5 +436,8 @@ export class AuthService {
     const list = this.prismaService.localDomain.findMany()
     console.log(list)
     return list
+  }
+  async setEmailAddress(user: AuthUser,form: any) {
+    return await this.usersService.updateEmailAddress(user,form)
   }
 }

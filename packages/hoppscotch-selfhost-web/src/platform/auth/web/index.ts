@@ -194,9 +194,9 @@ async function refreshToken() {
     //     "refresh_token",
     //     res.data.refresh_token
     //   )
-      // authEvents$.next({
-      //   event: "token_refresh",
-      // })
+    // authEvents$.next({
+    //   event: "token_refresh",
+    // })
     // }
     return isSuccessful
   } catch (error) {
@@ -357,8 +357,8 @@ export const def: AuthPlatformDef = {
     return app.post(`${import.meta.env.VITE_BACKEND_API_URL}/auth/siginUserAndPass`, form)
   },
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async setEmailAddress(_email: string) {
-    return
+  async setEmailAddress(email: string) {
+    return app.post(`${import.meta.env.VITE_BACKEND_API_URL}/auth/setEmailAddress`, { email })
   },
 
   async setDisplayName(name: string) {

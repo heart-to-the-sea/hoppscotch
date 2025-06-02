@@ -554,10 +554,35 @@ export const def: AuthPlatformDef = {
     await persistenceService.removeLocalConfig("deviceIdentifier")
     await persistenceService.removeLocalConfig("verifyToken")
   },
-
   // Removed parameter from here because we do not use it
-  async setEmailAddress() {
-    return
+  async setEmailAddress(email: string) {
+     const accessToken = await persistenceService.getLocalConfig("access_token")
+  const refreshToken = await persistenceService.getLocalConfig("refresh_token")
+  const headers: any = {}
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+    headers.access_token = accessToken
+  }
+  const { response } = interceptorService.execute({
+    id: Date.now(),
+    url: `${import.meta.env.VITE_BACKEND_API_URL}/auth/setEmailAddress`,
+    version: "HTTP/1.1",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...headers
+    },
+    content: content.json({ email }),
+  })
+  const responseBytes = await response
+  console.log(responseBytes)
+  if (E.isLeft(responseBytes)) {
+    return { error: "校验 未找到cookie" }
+  }
+  const res:any = parseBodyAsJSON<GQLResponse>(responseBytes.right.body)
+  console.log(res)
+  res.data = res.value
+  return res
   },
 
   async setDisplayName(name: string) {

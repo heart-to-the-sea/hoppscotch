@@ -32,7 +32,7 @@ export class AuthController {
   constructor(
     private authService: AuthService,
     private configService: ConfigService,
-  ) {}
+  ) { }
 
   @Get('providers')
   async getAuthProviders() {
@@ -84,6 +84,14 @@ export class AuthController {
   async daemonList(@Res() res: Response) {
     const authTokens = await this.authService.daemonList();
     res.status(200).json(authTokens).send();
+  }
+  @Post('setEmailAddress')
+  @UseGuards(JwtAuthGuard)
+  async setEmailAddress(@GqlUser() user: AuthUser, @Res() res: Response, @Body() data: any) {
+    console.log('setEmail Address', user, data)
+    const authTokens = await this.authService.setEmailAddress(user, data);
+    res.status(200).json(authTokens).send();
+
   }
 
   /**
